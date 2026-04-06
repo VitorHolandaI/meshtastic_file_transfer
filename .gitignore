@@ -1,0 +1,14 @@
+# Received files from transfers
+received_files/
+
+# Temp / test artifacts
+*.txt
+*.pdf
+*.jpeg
+*.jpg
+*.png
+!README.md
+
+# Python cache
+__pycache__/
+*.py[oc]
