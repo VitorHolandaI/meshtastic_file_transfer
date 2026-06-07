@@ -142,11 +142,11 @@ def on_receive(packet, interface):
         else:
             print(f"  <- CHK {chunk_num}/{total} (duplicate, re-ACKing)")
 
-        for repeat in range(1, 4):
-            send_packet(make_ack(chunk_num))
-            print(f"  -> ACK {chunk_num} [{repeat}/3]")
-            if repeat < 3:
-                time.sleep(1.5)
+        # Single ACK: if it's lost the sender will time out and retransmit,
+        # and we'll re-ACK the duplicate. Bursting ACKs floods the
+        # half-duplex channel and causes collisions with the next chunk.
+        send_packet(make_ack(chunk_num))
+        print(f"  -> ACK {chunk_num}")
 
         if received == total and not transfer["complete"]:
             transfer["complete"] = True

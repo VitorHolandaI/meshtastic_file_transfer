@@ -204,8 +204,9 @@ def send_file(filepath):
 
         chunk_num = i + 1
         retries = 0
+        acked = False
 
-        while retries < MAX_RETRIES:
+        while retries < MAX_RETRIES and not acked:
             if transfer_aborted:
                 break
 
@@ -232,23 +233,36 @@ def send_file(filepath):
                 transfer_aborted = True
                 break
 
-            got_ack = ack_event.wait(timeout=ACK_TIMEOUT)
+            # Wait for the ACK that matches THIS chunk. Stale/duplicate ACKs
+            # for older chunks are ignored without burning a retry or
+            # resending (a resend would collide with the receiver's ACK on
+            # the half-duplex channel and make things worse).
+            deadline = time.time() + ACK_TIMEOUT
+            while True:
+                wait_for = deadline - time.time()
+                if wait_for <= 0:
+                    break  # genuine timeout: no matching ACK in the window
+                if not ack_event.wait(timeout=wait_for):
+                    break
+                if transfer_done or transfer_aborted:
+                    break
+                if ack_received_num == chunk_num:
+                    acked = True
+                    break
+                # stale ACK for an older chunk: ignore and keep waiting
+                ack_event.clear()
 
-            if not got_ack:
-                print(f"    !! Timeout waiting for ACK {chunk_num}")
-                retries += 1
-                time.sleep(2)
-                continue
-
-            if transfer_done:
+            if acked or transfer_done or transfer_aborted:
                 break
-            if ack_received_num == chunk_num:
-                break
-            else:
-                retries += 1
-                continue
 
-        if retries >= MAX_RETRIES:
+            print(f"    !! Timeout waiting for ACK {chunk_num}")
+            retries += 1
+            time.sleep(config.RETRY_BACKOFF)
+
+        if transfer_done or transfer_aborted:
+            break
+
+        if not acked:
             print(f"\n!! Max retries for chunk {chunk_num}. Aborting.")
             send_packet(make_abort())
             transfer_aborted = True

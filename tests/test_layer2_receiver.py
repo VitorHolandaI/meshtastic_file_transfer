@@ -75,19 +75,18 @@ class TestReceiverChkPacket(unittest.TestCase):
         self.assertEqual(receiver.transfer["chunks"][1], b"data")
 
     @patch("receiver.time.sleep")
-    def test_chk_sends_ack_three_times(self, _sleep):
+    def test_chk_sends_single_ack(self, _sleep):
         receiver.on_receive(make_packet(make_chunk(2, b"data")), None)
         payloads = sent_payloads(receiver.mesh_interface)
-        self.assertEqual(len(payloads), 3)
-        for p in payloads:
-            self.assertEqual(p, make_ack(2))
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0], make_ack(2))
 
     @patch("receiver.time.sleep")
-    def test_chk_ack_sleeps_between_sends(self, mock_sleep):
+    def test_chk_ack_has_no_inter_send_sleep(self, mock_sleep):
         receiver.on_receive(make_packet(make_chunk(1, b"x")), None)
-        # 2 sleeps of 1.5s between 3 ACKs
+        # single ACK, so no 1.5s spacing sleeps
         sleep_calls = [c[0][0] for c in mock_sleep.call_args_list]
-        self.assertEqual(sleep_calls.count(1.5), 2)
+        self.assertEqual(sleep_calls.count(1.5), 0)
 
     @patch("receiver.time.sleep")
     def test_chk_duplicate_does_not_double_count(self, _sleep):
@@ -96,8 +95,8 @@ class TestReceiverChkPacket(unittest.TestCase):
         receiver.on_receive(make_packet(make_chunk(1, b"second")), None)
         # chunk still overwritten but count stays 1
         self.assertEqual(len(receiver.transfer["chunks"]), 1)
-        # ACK still sent 3 times for duplicate
-        self.assertEqual(receiver.mesh_interface.sendData.call_count, 3)
+        # ACK sent once for the duplicate
+        self.assertEqual(receiver.mesh_interface.sendData.call_count, 1)
 
     @patch("receiver.time.sleep")
     def test_chk_ignored_when_not_active(self, _sleep):
