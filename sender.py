@@ -12,17 +12,18 @@ import os
 import threading
 import glob
 
+import config
 from meshtcp import (
     PORT_NUM, HOP_LIMIT, MAX_CHUNK_DATA, ACK_TIMEOUT, MAX_RETRIES,
     make_header, make_chunk, make_done, make_abort,
-    parse_packet, file_md5, disable_pkc,
+    parse_packet, file_md5, disable_pkc, apply_radio_config,
 )
 
-DEST_ID = 2896785728  # 7140 (WSL V3) on ttyUSB0
+DEST_ID = config.RECEIVER_NODE_ID  # sender transmits to the receiver node
 
-DELAY_BETWEEN_CHUNKS = 3
-DELAY_AFTER_HEADER = 3
-SECONDS_PER_CHUNK = 5
+DELAY_BETWEEN_CHUNKS = config.DELAY_BETWEEN_CHUNKS
+DELAY_AFTER_HEADER = config.DELAY_AFTER_HEADER
+SECONDS_PER_CHUNK = config.SECONDS_PER_CHUNK
 
 ack_event = threading.Event()
 ack_received_num = -1
@@ -178,6 +179,7 @@ def send_file(filepath):
     mesh_interface = meshtastic.serial_interface.SerialInterface(port)
     time.sleep(3)
 
+    apply_radio_config(mesh_interface)
     disable_pkc(mesh_interface)
 
     print(f"Connected! Node: {mesh_interface.myInfo.my_node_num}\n")
