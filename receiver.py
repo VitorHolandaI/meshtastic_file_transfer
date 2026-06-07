@@ -12,14 +12,15 @@ import os
 import signal
 import glob
 
+import config
 from meshtcp import (
     PORT_NUM, HOP_LIMIT,
     make_ack, make_nack, make_done, make_abort,
-    parse_packet, bytes_md5, disable_pkc,
+    parse_packet, bytes_md5, disable_pkc, apply_radio_config,
 )
 
-OUTPUT_DIR = "received_files"
-SENDER_ID = 3382279048  # 7b88 (V2.1) on ttyUSB1
+OUTPUT_DIR = config.OUTPUT_DIR
+SENDER_ID = config.SENDER_NODE_ID  # receiver sends ACKs back to the sender node
 
 # Transfer state
 transfer = {
@@ -141,11 +142,11 @@ def on_receive(packet, interface):
         else:
             print(f"  <- CHK {chunk_num}/{total} (duplicate, re-ACKing)")
 
-        for repeat in range(1, 4):
-            send_packet(make_ack(chunk_num))
-            print(f"  -> ACK {chunk_num} [{repeat}/3]")
-            if repeat < 3:
-                time.sleep(1.5)
+        # Single ACK: if it's lost the sender will time out and retransmit,
+        # and we'll re-ACK the duplicate. Bursting ACKs floods the
+        # half-duplex channel and causes collisions with the next chunk.
+        send_packet(make_ack(chunk_num))
+        print(f"  -> ACK {chunk_num}")
 
         if received == total and not transfer["complete"]:
             transfer["complete"] = True
@@ -201,6 +202,7 @@ def main():
 
     mesh_interface = connect()
 
+    apply_radio_config(mesh_interface)
     disable_pkc(mesh_interface)
 
     my_node = mesh_interface.myInfo.my_node_num
@@ -219,6 +221,7 @@ def main():
                 pass
             time.sleep(10)  # wait longer — cp210x needs time after power cycle
             mesh_interface = connect(retry_interval=5, max_wait=120)
+            apply_radio_config(mesh_interface)
             disable_pkc(mesh_interface)
             print(f"  Reconnected! Node: {mesh_interface.myInfo.my_node_num}")
             print("  Waiting for file transfer...\n")
