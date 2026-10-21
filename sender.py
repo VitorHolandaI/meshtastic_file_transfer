@@ -12,17 +12,18 @@ import os
 import threading
 import glob
 
+import config
 from meshtcp import (
     PORT_NUM, HOP_LIMIT, MAX_CHUNK_DATA, ACK_TIMEOUT, MAX_RETRIES,
     make_header, make_chunk, make_done, make_abort,
-    parse_packet, file_md5, disable_pkc,
+    parse_packet, file_md5, disable_pkc, apply_radio_config,
 )
 
-DEST_ID = 2896785728  # 7140 (WSL V3) on ttyUSB0
+DEST_ID = config.RECEIVER_NODE_ID  # sender transmits to the receiver node
 
-DELAY_BETWEEN_CHUNKS = 3
-DELAY_AFTER_HEADER = 3
-SECONDS_PER_CHUNK = 5
+DELAY_BETWEEN_CHUNKS = config.DELAY_BETWEEN_CHUNKS
+DELAY_AFTER_HEADER = config.DELAY_AFTER_HEADER
+SECONDS_PER_CHUNK = config.SECONDS_PER_CHUNK
 
 ack_event = threading.Event()
 ack_received_num = -1
@@ -178,6 +179,7 @@ def send_file(filepath):
     mesh_interface = meshtastic.serial_interface.SerialInterface(port)
     time.sleep(3)
 
+    apply_radio_config(mesh_interface)
     disable_pkc(mesh_interface)
 
     print(f"Connected! Node: {mesh_interface.myInfo.my_node_num}\n")
@@ -202,8 +204,9 @@ def send_file(filepath):
 
         chunk_num = i + 1
         retries = 0
+        acked = False
 
-        while retries < MAX_RETRIES:
+        while retries < MAX_RETRIES and not acked:
             if transfer_aborted:
                 break
 
@@ -230,23 +233,36 @@ def send_file(filepath):
                 transfer_aborted = True
                 break
 
-            got_ack = ack_event.wait(timeout=ACK_TIMEOUT)
+            # Wait for the ACK that matches THIS chunk. Stale/duplicate ACKs
+            # for older chunks are ignored without burning a retry or
+            # resending (a resend would collide with the receiver's ACK on
+            # the half-duplex channel and make things worse).
+            deadline = time.time() + ACK_TIMEOUT
+            while True:
+                wait_for = deadline - time.time()
+                if wait_for <= 0:
+                    break  # genuine timeout: no matching ACK in the window
+                if not ack_event.wait(timeout=wait_for):
+                    break
+                if transfer_done or transfer_aborted:
+                    break
+                if ack_received_num == chunk_num:
+                    acked = True
+                    break
+                # stale ACK for an older chunk: ignore and keep waiting
+                ack_event.clear()
 
-            if not got_ack:
-                print(f"    !! Timeout waiting for ACK {chunk_num}")
-                retries += 1
-                time.sleep(2)
-                continue
-
-            if transfer_done:
+            if acked or transfer_done or transfer_aborted:
                 break
-            if ack_received_num == chunk_num:
-                break
-            else:
-                retries += 1
-                continue
 
-        if retries >= MAX_RETRIES:
+            print(f"    !! Timeout waiting for ACK {chunk_num}")
+            retries += 1
+            time.sleep(config.RETRY_BACKOFF)
+
+        if transfer_done or transfer_aborted:
+            break
+
+        if not acked:
             print(f"\n!! Max retries for chunk {chunk_num}. Aborting.")
             send_packet(make_abort())
             transfer_aborted = True

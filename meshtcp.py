@@ -17,18 +17,23 @@ Usable data per chunk: 200 bytes (conservative)
 import hashlib
 import time
 
-PORT_NUM = 256  # PRIVATE_APP
-MAX_PAYLOAD = 228
-MAX_CHUNK_DATA = 200
-HOP_LIMIT = 3
-ACK_TIMEOUT = 15
-MAX_RETRIES = 5
+import config
+
+# Re-exported from config so sender/receiver/tests keep importing from meshtcp.
+PORT_NUM = config.PORT_NUM  # PRIVATE_APP
+MAX_PAYLOAD = config.MAX_PAYLOAD
+MAX_CHUNK_DATA = config.MAX_CHUNK_DATA
+HOP_LIMIT = config.HOP_LIMIT
+ACK_TIMEOUT = config.ACK_TIMEOUT
+MAX_RETRIES = config.MAX_RETRIES
 SEPARATOR = b"|"
 
 
 def disable_pkc(interface):
     """Disable PKC encryption so packets arrive decoded, not encrypted.
     Call this right after creating the SerialInterface."""
+    if not config.DISABLE_PKC:
+        return
     try:
         node = interface.getNode("^local")
         security = node.localConfig.security
@@ -44,6 +49,48 @@ def disable_pkc(interface):
             print("  PKC already disabled.")
     except Exception as e:
         print(f"  Warning: could not disable PKC: {e}")
+
+
+def apply_radio_config(interface):
+    """Set the LoRa modem preset + region from config, rebooting the radio only
+    if a value actually differs. Call right after creating the SerialInterface."""
+    if not config.APPLY_RADIO_CONFIG:
+        return
+    try:
+        from meshtastic.protobuf import config_pb2
+
+        ModemPreset = config_pb2.Config.LoRaConfig.ModemPreset
+        RegionCode = config_pb2.Config.LoRaConfig.RegionCode
+        preset_val = ModemPreset.Value(config.MODEM_PRESET)
+        region_val = RegionCode.Value(config.LORA_REGION)
+
+        node = interface.getNode("^local")
+        lora = node.localConfig.lora
+
+        changed = False
+        if not lora.use_preset or lora.modem_preset != preset_val:
+            lora.use_preset = True
+            lora.modem_preset = preset_val
+            changed = True
+        if lora.region != region_val:
+            lora.region = region_val
+            changed = True
+
+        if changed:
+            print(
+                f"  Applying radio config: preset={config.MODEM_PRESET}, "
+                f"region={config.LORA_REGION} (radio will reboot)..."
+            )
+            node.writeConfig("lora")
+            time.sleep(12)  # radio reboots after a lora config change
+            print("  Radio config applied.")
+        else:
+            print(
+                f"  Radio already at preset={config.MODEM_PRESET}, "
+                f"region={config.LORA_REGION}."
+            )
+    except Exception as e:
+        print(f"  Warning: could not apply radio config: {e}")
 
 
 def make_header(filename, total_chunks, md5_hash):
